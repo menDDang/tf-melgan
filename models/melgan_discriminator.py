@@ -1,3 +1,5 @@
+import argparse
+
 import tensorflow as tf
 
 
@@ -85,43 +87,44 @@ class DiscriminatorBlock(tf.keras.layers.Layer):
 
 
 class MelGanDiscriminator(tf.keras.Model):
-    def __init__(self, alpha=0.3):
+    def __init__(self, hp : dict):
         super(MelGanDiscriminator, self).__init__()
 
-        self.block1 = DiscriminatorBlock(alpha=alpha)
-        self.avg_pool1 = tf.keras.layers.AveragePooling1D(pool_size=4, padding='same')
-        self.block2 = DiscriminatorBlock(alpha=alpha)
-        self.avg_pool2 = tf.keras.layers.AveragePooling1D(pool_size=4, padding='same')
-        self.block3 = DiscriminatorBlock(alpha=alpha)
+        self.num_blocks = hp["discriminator"]["num_blocks"]
+        alpha = hp["discriminator"]["leaky_relu_alpha"]
+        
+        self.blocks = []
+        for n in range(self.num_blocks):
+            self.blocks.append(DiscriminatorBlock(alpha=alpha))
 
+        self.avg_pools = []
+        for n in range(self.num_blocks - 1):
+            self.avg_pools.append(
+                tf.keras.layers.AveragePooling1D(pool_size=4, padding='same')
+            )
 
     @tf.function(experimental_compile=True)
     def call(self, x):
-
-        output1, feature_maps1 = self.block1(x)
-        x = self.avg_pool1(x)
-        output2, feature_maps2 = self.block2(x)
-        x = self.avg_pool2(x)
-        output3, feature_maps3 = self.block3(x)
-
-        outputs = [output1, output2, output3]
-        feature_maps = [] + feature_maps1 + feature_maps2 + feature_maps3
+        outputs = []
+        feature_maps = []
+        for n in range(self.num_blocks):
+            out, map = self.blocks[n](x)
+            outputs.append(out)
+            feature_maps.append(map)
+            if n < self.num_blocks - 1:
+                x = self.avg_pools[n](x)
+            
         return outputs, feature_maps
 
-if __name__ == "__main__":
-    batch_size = 1
-    input_time_length = 2048 * 4
-    input_dimension = 1
+    @staticmethod
+    def ParseArgument(parser: argparse.ArgumentParser):
+        parser.add_argument("--discriminator_num_blocks", type=int, default=1)
+        parser.add_argument("--discriminator_leaky_relu_alpha", type=float, default=0.2)
 
-    mel_gan_discriminator = MelGanDiscriminator()
-
-    x = tf.zeros(shape=[batch_size, input_time_length, input_dimension], dtype=tf.float32)
-    outputs, feature_maps = mel_gan_discriminator(x)
-
-    print("outputs : ")
-    for output in outputs:
-        print(output.shape)
-    
-    print("feature maps : ")
-    for features in feature_maps:
-        print(features.shape)
+    @staticmethod
+    def CreateHparamDict(hp : dict, args):
+        hp["discriminator"] = {
+           "num_blocks" : args.discriminator_num_blocks,
+           "leaky_relu_alpha" : args.discriminator_leaky_relu_alpha
+        }
+        return hp
