@@ -110,7 +110,8 @@ class MelGanDiscriminator(tf.keras.Model):
         for n in range(self.num_blocks):
             out, map = self.blocks[n](x)
             outputs.append(out)
-            feature_maps.append(map)
+            for k in range(len(map)):
+                feature_maps.append(map[k])
             if n < self.num_blocks - 1:
                 x = self.avg_pools[n](x)
             
