@@ -75,7 +75,7 @@ class DiscriminatorBlock(tf.keras.layers.Layer):
         feature_map3 = self.conv2(feature_map2_4)
         feature_map3 = tf.nn.leaky_relu(feature_map3, self.alpha)
         output = self.conv3(feature_map3)
-        output = tf.nn.leaky_relu(output, self.alpha)
+        #output = tf.nn.leaky_relu(output, self.alpha)
 
         feature_maps = [
             feature_map1,
