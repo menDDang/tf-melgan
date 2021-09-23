@@ -1,6 +1,9 @@
 import argparse
+import os
+import datetime
 
 import tensorflow as tf
+from tensorboard.plugins.hparams import api
 
 import datasets
 from models import MelGanDiscriminator, MelGanGenerator
@@ -27,6 +30,7 @@ def ParseArgument():
     
     parser.add_argument("--max_duration", type=float, default=10)
     parser.add_argument("--feat_matching_weight", type=float, default=10)
+    parser.add_argument("--use_hinge_loss", type=bool, default=True)
 
     # Parse arguments for audio dataset
     datasets.AudioDataset.ParseArgument(parser)
@@ -51,56 +55,80 @@ def CreateParamDict(args):
 
     hp["max_duration"] = args.max_duration
     hp["feat_matching_weight"] = args.feat_matching_weight
+    hp["use_hinge_loss"] = args.use_hinge_loss
 
     hp = datasets.AudioDataset.CreateHparamDict(hp, args)
     hp = MelGanDiscriminator.CreateHparamDict(hp, args)
     return hp
 
 def BuildOptimizer(hp):
-    lr = tf.optimizers.schedules.PolynomialDecay(
+    d_lr = tf.optimizers.schedules.PolynomialDecay(
+        hp["init_learning_rate"],
+        hp["learning_rate_decay_steps"],
+        hp["end_learning_rate"])
+    g_lr = tf.optimizers.schedules.PolynomialDecay(
         hp["init_learning_rate"],
         hp["learning_rate_decay_steps"],
         hp["end_learning_rate"])
 
     if hp["optimizer"] == "sgd":
-        optimizer = tf.optimizers.SGD(lr)
-        return optimizer
+        d_optimizer = tf.optimizers.SGD(d_lr)
+        g_optimizer = tf.optimizers.SGD(g_lr)
+        return d_optimizer, g_optimizer
     elif hp["optimizer"] == "adam":
-        optimizer = tf.optimizers.Adam(lr)
-        return optimizer
+        d_optimizer = tf.optimizers.Adam(d_lr, beta_1=0.5, beta_2=0.9)
+        g_optimizer = tf.optimizers.Adam(g_lr, beta_1=0.5, beta_2=0.9)
+        return d_optimizer, g_optimizer
     elif hp["optimizer"] == "adadelta":
-        optimizer = tf.optimizers.Adadelta(lr, rho=0.95, epsilon=1e-10)
-        return optimizer
+        d_optimizer = tf.optimizers.Adadelta(d_lr, rho=0.95, epsilon=1e-10)
+        g_optimizer = tf.optimizers.Adadelta(g_lr, rho=0.95, epsilon=1e-10)
+        return d_optimizer, g_optimizer
     else:
         raise ValueError("Invalid type of optimizer")
 
 @tf.function
-def ComputeLoss(d_reals, d_real_maps, d_fakes, d_fake_maps, feat_matching_weight=10):
-    '''
-    * Use "hinge loss" for discriminator
-    * Paper - Miyato, T., Kataoka, T., Koyama, M., and Yoshida, Y. 
-      "Spectral normalization for generative adversarial networks.", 
-      arXiv preprint arXiv:1802.05957, 2018.
-    * Link - https://arxiv.org/pdf/1802.05957.pdf
-    '''
-    # d_loss_real = mean(min(0, 1 - d_real))
-    # d_loss_fake = mean(min(0, 1 + d_fake))
-    # d_loss = d_loss_real + d_loss_fake
-    d_loss = 0
-    for k in range(len(d_reals)):
-        d_loss_real_k = tf.reduce_mean(
-            tf.minimum(0.0, 1 - d_reals[k]))
-        d_loss_fake_k = tf.reduce_mean(
-            tf.minimum(0.0, 1 + d_fakes[k]))
-        d_loss += d_loss_real_k + d_loss_fake_k
+def compute_d_loss(d_reals, d_fakes, use_hinge_loss=True):
+    if use_hinge_loss:
+        '''
+        * Use "hinge loss" for discriminator
+        * Paper - Miyato, T., Kataoka, T., Koyama, M., and Yoshida, Y. 
+        "Spectral normalization for generative adversarial networks.", 
+        arXiv preprint arXiv:1802.05957, 2018.
+        * Link - https://arxiv.org/pdf/1802.05957.pdf
         
+        # d_loss_real = mean(min(0, 1 - d_real))
+        # d_loss_fake = mean(min(0, 1 + d_fake))
+        # d_loss = d_loss_real + d_loss_fake
+        '''
+        d_loss = 0
+        for k in range(len(d_reals)):
+            d_loss_real_k = -1.0 * tf.reduce_mean(
+                tf.minimum(0.0, -1 + d_reals[k]))
+            d_loss_fake_k = -1.0 * tf.reduce_mean(
+                tf.minimum(0.0, -1 - d_fakes[k]))
+            d_loss += d_loss_real_k + d_loss_fake_k
+    else:
+        '''
+        * Use original loss for discriminator
+        '''
+        d_loss = 0
+        for k in range(len(d_reals)):
+            d_loss_real_k = -1.0 * tf.reduce_mean(
+                tf.math.log(tf.nn.sigmoid(d_reals[k])))
+            d_loss_fake_k = -1.0 * tf.reduce_mean(
+                tf.math.log(1 - tf.nn.sigmoid(d_fakes[k])))
+            d_loss += d_loss_real_k + d_loss_fake_k
+    return d_loss
+
+@tf.function
+def compute_g_loss(d_real_maps, d_fakes, d_fake_maps, feat_matching_weight=10):
     # g_adv_loss = mean(sum(-d_fake))
     # g_feat_matching_loss = mean(
     #   rms(d_real_maps[i] - d_fake_maps[i]))
     # g_loss = g_adv_loss + feat_matching_weight * g_feat_matching_loss
     g_adv_loss = 0
     for k in range(len(d_fakes)):
-        g_adv_loss_k = -1 * d_fakes[k]
+        g_adv_loss_k = tf.reduce_mean(-1 * d_fakes[k])
         g_adv_loss += g_adv_loss_k
     g_feat_matching_loss = 0
     for k in range(len(d_real_maps)):
@@ -108,24 +136,61 @@ def ComputeLoss(d_reals, d_real_maps, d_fakes, d_fake_maps, feat_matching_weight
             tf.reduce_mean(tf.abs(d_real_maps[k] - d_fake_maps[k]))
     g_loss = tf.reduce_mean(g_adv_loss) \
         + feat_matching_weight * g_feat_matching_loss
-
-    return d_loss, g_loss
-
-
+    return g_loss
+    
 @tf.function
 def train_step(audio_real, mel,
-               generator, discriminator, optimizer,
-               max_audio_length, feat_matching_weight=10):
-    
-    d_reals, d_real_maps = discriminator(audio_real)
-
+               generator, discriminator, 
+               g_optimizer, d_optimizer,
+               max_audio_length, 
+               feat_matching_weight=10,
+               use_hinge_loss=True):
     audio_fake = generator(mel)
-    audio_fake = audio_fake[:, :max_audio_length, :]
-    d_fakes, d_fake_maps = discriminator(audio_fake)
+    audio_fake = audio_fake[:, :max_audio_length, :]    
+    with tf.GradientTape() as tape:
+        d_reals, d_real_maps = discriminator(audio_real)
+        d_fakes, d_fake_maps = discriminator(audio_fake)
 
-    d_loss, g_loss = ComputeLoss(d_reals, d_real_maps, d_fakes, d_fake_maps, feat_matching_weight)
+        d_loss = compute_d_loss(d_reals, d_fakes, use_hinge_loss)
+        
+        d_vars = discriminator.trainable_variables
+        d_grads = tape.gradient(d_loss, d_vars)
+        d_optimizer.apply_gradients(zip(d_grads, d_vars))
+
+    with tf.GradientTape() as tape:
+        audio_fake = generator(mel)
+        audio_fake = audio_fake[:, :max_audio_length, :]
+        d_reals, d_real_maps = discriminator(audio_real)
+        d_fakes, d_fake_maps = discriminator(audio_fake)
+
+        g_loss = compute_g_loss(d_real_maps, 
+            d_fakes, d_fake_maps, 
+            feat_matching_weight)
+
+        g_vars = generator.trainable_variables
+        g_grads = tape.gradient(g_loss, g_vars)
+        g_optimizer.apply_gradients(zip(g_grads, g_vars))
+        
     return d_loss, g_loss
 
+@tf.function
+def valid_step(audio_real, mel,
+               generator, discriminator, 
+               max_audio_length, 
+               feat_matching_weight=10,
+               use_hinge_loss=True):
+    audio_fake = generator(mel)
+    audio_fake = audio_fake[:, :max_audio_length, :]    
+    
+    d_reals, d_real_maps = discriminator(audio_real)
+    d_fakes, d_fake_maps = discriminator(audio_fake)
+
+    d_loss = compute_d_loss(d_reals, d_fakes, use_hinge_loss)
+    g_loss = compute_g_loss(d_real_maps, 
+        d_fakes, d_fake_maps, 
+        feat_matching_weight)
+        
+    return d_loss, g_loss
 
 
 if __name__ == "__main__":
@@ -133,10 +198,18 @@ if __name__ == "__main__":
     args = ParseArgument()
     hp = CreateParamDict(args)
     
+    os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu_ids
+
+    current_time = datetime.datetime.now().strftime('%Y-%m-%d-%H-%M')
+    log_dir = os.path.join(args.log_dir, current_time)
+    chkpt_dir = os.path.join(args.chkpt_dir, current_time)
+
+    #with tf.summary.create_file_writer(log_dir).as_default():
+    #    api.hparams(hp)
+    
     SAMPLING_RATE = hp["audio"]["sampling_rate"]
     window_size = int(hp["audio"]["frame_length_in_sec"] * SAMPLING_RATE)
     hop_size = int(hp["audio"]["step_length_in_sec"] * SAMPLING_RATE)
-    feat_matching_weight = hp["feat_matching_weight"]
     
     ljspeech = datasets.LJSpeechDataset(hp)
     ljspeech.Load(args.train_tfrecord, args.valid_tfrecord)
@@ -171,13 +244,66 @@ if __name__ == "__main__":
         
     generator = MelGanGenerator()
     discriminator = MelGanDiscriminator(hp)
-    optimizer = BuildOptimizer(hp)
+    d_optimizer, g_optimizer = BuildOptimizer(hp)
 
-    for step, (audio_real, mel) in enumerate(train_dataset):
-        d_loss, g_loss = train_step(
-            audio_real, mel,
-            generator, discriminator, optimizer,
-            max_audio_length, feat_matching_weight
-        )
-        print(d_loss, g_loss)
-        break
+    for iter in range(1, hp["num_iter"] + 1):
+        #
+        # Training
+        #
+        train_d_loss_object = tf.keras.metrics.Mean()
+        train_g_loss_object = tf.keras.metrics.Mean()
+
+        for step, (audio_real, mel) in enumerate(train_dataset):
+            d_loss, g_loss = train_step(
+                audio_real, mel,
+                generator, discriminator, 
+                d_optimizer, g_optimizer,
+                max_audio_length, 
+                feat_matching_weight=hp["feat_matching_weight"],
+                use_hinge_loss=hp["use_hinge_loss"]
+            )
+            train_d_loss_object.update_state(d_loss)
+            train_g_loss_object.update_state(g_loss)
+            
+        train_d_loss = train_d_loss_object.result()
+        train_g_loss = train_g_loss_object.result()
+        
+        with tf.summary.create_file_writer(log_dir).as_default():
+            tf.summary.scalar("Train D Loss", train_d_loss, step=iter)
+            tf.summary.scalar("Train G Loss", train_g_loss, step=iter)
+        
+        #
+        # Validation
+        #
+        valid_d_loss_object = tf.keras.metrics.Mean()
+        valid_g_loss_object = tf.keras.metrics.Mean()
+
+        for step, (audio_real, mel) in enumerate(valid_dataset):
+            d_loss, g_loss = valid_step(
+                audio_real, mel,
+                generator, discriminator,
+                max_audio_length, 
+                feat_matching_weight=hp["feat_matching_weight"],
+                use_hinge_loss=hp["use_hinge_loss"]
+            )
+            valid_d_loss_object.update_state(d_loss)
+            valid_g_loss_object.update_state(g_loss)
+            
+        valid_d_loss = valid_d_loss_object.result()
+        valid_g_loss = valid_g_loss_object.result()
+        
+        with tf.summary.create_file_writer(log_dir).as_default():
+            tf.summary.scalar("Valid D Loss", valid_d_loss, step=iter)
+            tf.summary.scalar("Valid G Loss", valid_g_loss, step=iter)
+
+        print("Iter : %d, Train D Loss : %f, Train G Loss : %f, " \
+              "Valid D Loss : %f, Valid G Loss : %f" % \
+            (iter, float(train_d_loss), float(train_g_loss), \
+            float(valid_d_loss), float(valid_g_loss)))
+
+        # Save checkpoint
+        chkpt_file_path = os.path.join(chkpt_dir, "discriminator", "chkpt_step:{}_loss:{:.4f}".format(iter, float(train_d_loss)))
+        discriminator.save_weights(chkpt_file_path)
+        chkpt_file_path = os.path.join(chkpt_dir, "generator", "chkpt_step:{}_loss:{:.4f}".format(iter, float(train_g_loss)))
+        generator.save_weights(chkpt_file_path)    
+        

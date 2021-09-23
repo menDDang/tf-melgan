@@ -1,7 +1,9 @@
 #!/bin/bash
 
-DATA_DIR=/home/kmyoon/data/LJSpeech-1.1
-WORK_DIR=/home/kmyoon/exp/tf-melgan
+#DATA_DIR=/home/kmyoon/data/LJSpeech-1.1
+#WORK_DIR=/home/kmyoon/exp/tf-melgan
+DATA_DIR=/home/feesh/corpus/LJSpeech-1.1
+WORK_DIR=/home/feesh/projects/tf-melgan
 OUT_DIR=${WORK_DIR}/outputs
 
 train_tfrecord=${OUT_DIR}/ljspeech/train.tfrecord
@@ -34,7 +36,11 @@ python3 train_melgan.py \
     --hertz_low 0 \
     --hertz_high 11025 \
     --max_duration 10 \
-    --discriminator_num_blocks 1 \
+    --discriminator_num_blocks 3 \
     --discriminator_leaky_relu_alpha 0.2 \
-    --batch_size 1 \
+    --batch_size 4 \
+    --optimizer adam \
+    --init_learning_rate 0.0001 \
+    --num_iter 100 \
+    --use_hinge_loss true \
     || exit 1;
