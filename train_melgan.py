@@ -76,6 +76,13 @@ def BuildOptimizer(hp):
 
 @tf.function
 def ComputeLoss(d_reals, d_real_maps, d_fakes, d_fake_maps, feat_matching_weight=10):
+    '''
+    * Use "hinge loss" for discriminator
+    * Paper - Miyato, T., Kataoka, T., Koyama, M., and Yoshida, Y. 
+      "Spectral normalization for generative adversarial networks.", 
+      arXiv preprint arXiv:1802.05957, 2018.
+    * Link - https://arxiv.org/pdf/1802.05957.pdf
+    '''
     # d_loss_real = mean(min(0, 1 - d_real))
     # d_loss_fake = mean(min(0, 1 + d_fake))
     # d_loss = d_loss_real + d_loss_fake
