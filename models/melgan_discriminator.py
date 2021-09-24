@@ -90,8 +90,8 @@ class MelGanDiscriminator(tf.keras.Model):
     def __init__(self, hp : dict):
         super(MelGanDiscriminator, self).__init__()
 
-        self.num_blocks = hp["discriminator"]["num_blocks"]
-        alpha = hp["discriminator"]["leaky_relu_alpha"]
+        self.num_blocks = hp["discriminator_num_blocks"]
+        alpha = hp["discriminator_leaky_relu_alpha"]
         
         self.blocks = []
         for n in range(self.num_blocks):
@@ -124,8 +124,6 @@ class MelGanDiscriminator(tf.keras.Model):
 
     @staticmethod
     def CreateHparamDict(hp : dict, args):
-        hp["discriminator"] = {
-           "num_blocks" : args.discriminator_num_blocks,
-           "leaky_relu_alpha" : args.discriminator_leaky_relu_alpha
-        }
+        hp["discriminator_num_blocks"] = args.discriminator_num_blocks
+        hp["discriminator_leaky_relu_alpha"] = args.discriminator_leaky_relu_alpha
         return hp

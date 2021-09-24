@@ -204,12 +204,12 @@ if __name__ == "__main__":
     log_dir = os.path.join(args.log_dir, current_time)
     chkpt_dir = os.path.join(args.chkpt_dir, current_time)
 
-    #with tf.summary.create_file_writer(log_dir).as_default():
-    #    api.hparams(hp)
+    with tf.summary.create_file_writer(log_dir).as_default():
+        api.hparams(hp)
     
-    SAMPLING_RATE = hp["audio"]["sampling_rate"]
-    window_size = int(hp["audio"]["frame_length_in_sec"] * SAMPLING_RATE)
-    hop_size = int(hp["audio"]["step_length_in_sec"] * SAMPLING_RATE)
+    SAMPLING_RATE = hp["sampling_rate"]
+    window_size = int(hp["frame_length_in_sec"] * SAMPLING_RATE)
+    hop_size = int(hp["step_length_in_sec"] * SAMPLING_RATE)
     
     ljspeech = datasets.LJSpeechDataset(hp)
     ljspeech.Load(args.train_tfrecord, args.valid_tfrecord)

@@ -7,16 +7,16 @@ import tensorflow as tf
 
 class AudioDataset:
     def __init__(self, hp):
-        self.frame_length_in_sec = hp["audio"]["frame_length_in_sec"]
-        self.step_length_in_sec = hp["audio"]["step_length_in_sec"]
-        self.num_fft_point = hp["audio"]["num_fft_point"]
+        self.frame_length_in_sec = hp["frame_length_in_sec"]
+        self.step_length_in_sec = hp["step_length_in_sec"]
+        self.num_fft_point = hp["num_fft_point"]
         
         self.mel_bins = tf.signal.linear_to_mel_weight_matrix(
-            num_mel_bins=hp["audio"]["num_mels"],
+            num_mel_bins=hp["num_mels"],
             num_spectrogram_bins=int(self.num_fft_point / 2) + 1,
-            sample_rate=hp["audio"]["sampling_rate"],
-            lower_edge_hertz=hp["audio"]["hertz_low"],
-            upper_edge_hertz=hp["audio"]["hertz_high"]
+            sample_rate=hp["sampling_rate"],
+            lower_edge_hertz=hp["hertz_low"],
+            upper_edge_hertz=hp["hertz_high"]
         )
 
     def CheckFileExist(self, filepath):
@@ -72,13 +72,12 @@ class AudioDataset:
 
     @staticmethod
     def CreateHparamDict(hp : dict, args):
-        hp["audio"] = {
-            "sampling_rate" : args.sampling_rate,
-            "frame_length_in_sec" : args.frame_length_in_sec,
-            "step_length_in_sec" : args.step_length_in_sec,
-            "num_fft_point" : args.num_fft_point,
-            "num_mels" : args.num_mels,
-            "hertz_low" : args.hertz_low,
-            "hertz_high" : args.hertz_high       
-        }
+
+        hp["sampling_rate"] = args.sampling_rate
+        hp["frame_length_in_sec"] = args.frame_length_in_sec
+        hp["step_length_in_sec"] = args.step_length_in_sec
+        hp["num_fft_point"] = args.num_fft_point
+        hp["num_mels"] = args.num_mels
+        hp["hertz_low"] = args.hertz_low
+        hp["hertz_high"] = args.hertz_high       
         return hp
