@@ -19,7 +19,8 @@ def ParseArgument():
     parser.add_argument("--train_tfrecord", type=str, required=True)
     parser.add_argument("--valid_tfrecord", type=str, required=True)
 
-    parser.add_argument("--init_learning_rate", type=float, default=0.01)
+    parser.add_argument("--d_learning_rate", type=float, default=0.01)
+    parser.add_argument("--g_learning_rate", type=float, default=0.01)
     parser.add_argument("--end_learning_rate", type=float, default=0.0001)
     parser.add_argument("--learning_rate_decay_steps", type=int, default=1000)
     parser.add_argument("--learning_rate_decay_rate", type=float, default=0.96)
@@ -30,7 +31,7 @@ def ParseArgument():
     
     parser.add_argument("--max_duration", type=float, default=10)
     parser.add_argument("--feat_matching_weight", type=float, default=10)
-    parser.add_argument("--use_hinge_loss", type=bool, default=True)
+    parser.add_argument("--use_hinge_loss", type=int, default=True)
 
     # Parse arguments for audio dataset
     datasets.AudioDataset.ParseArgument(parser)
@@ -44,7 +45,8 @@ def ParseArgument():
 
 def CreateParamDict(args):
     hp = dict()
-    hp["init_learning_rate"] = args.init_learning_rate
+    hp["d_learning_rate"] = args.d_learning_rate
+    hp["g_learning_rate"] = args.g_learning_rate
     hp["end_learning_rate"] = args.end_learning_rate
     hp["learning_rate_decay_steps"] = args.learning_rate_decay_steps
     hp["learning_rate_decay_rate"] = args.learning_rate_decay_rate
@@ -55,21 +57,23 @@ def CreateParamDict(args):
 
     hp["max_duration"] = args.max_duration
     hp["feat_matching_weight"] = args.feat_matching_weight
-    hp["use_hinge_loss"] = args.use_hinge_loss
+    hp["use_hinge_loss"] = bool(args.use_hinge_loss)
 
     hp = datasets.AudioDataset.CreateHparamDict(hp, args)
     hp = MelGanDiscriminator.CreateHparamDict(hp, args)
     return hp
 
 def BuildOptimizer(hp):
-    d_lr = tf.optimizers.schedules.PolynomialDecay(
-        hp["init_learning_rate"],
-        hp["learning_rate_decay_steps"],
-        hp["end_learning_rate"])
-    g_lr = tf.optimizers.schedules.PolynomialDecay(
-        hp["init_learning_rate"],
-        hp["learning_rate_decay_steps"],
-        hp["end_learning_rate"])
+    #d_lr = tf.optimizers.schedules.PolynomialDecay(
+    #    hp["init_learning_rate"],
+    #    hp["learning_rate_decay_steps"],
+    #    hp["end_learning_rate"])
+    #g_lr = tf.optimizers.schedules.PolynomialDecay(
+    #    hp["init_learning_rate"],
+    #    hp["learning_rate_decay_steps"],
+    #    hp["end_learning_rate"])
+    d_lr = hp["d_learning_rate"]
+    g_lr = hp["g_learning_rate"]
 
     if hp["optimizer"] == "sgd":
         d_optimizer = tf.optimizers.SGD(d_lr)
@@ -113,12 +117,15 @@ def compute_d_loss(d_reals, d_fakes, use_hinge_loss=True):
         '''
         d_loss = 0
         for k in range(len(d_reals)):
-            d_loss_real_k = -1.0 * tf.reduce_mean(
-                tf.math.log(tf.nn.sigmoid(d_reals[k])))
-            d_loss_fake_k = -1.0 * tf.reduce_mean(
-                tf.math.log(1 - tf.nn.sigmoid(d_fakes[k])))
+            d_loss_real_k = tf.reduce_mean(
+                tf.math.log(tf.maximum(d_reals[k], 1e-6)))
+            d_loss_fake_k = tf.reduce_mean(
+                tf.math.log(tf.maximum(1 - d_fakes[k], 1e-6)))
             d_loss += d_loss_real_k + d_loss_fake_k
-    return d_loss
+    
+    # Since D is trained to maximize d_loss,
+    # optimizer will minimize -d_loss
+    return -1 * d_loss
 
 @tf.function
 def compute_g_loss(d_real_maps, d_fakes, d_fake_maps, feat_matching_weight=10):
@@ -128,16 +135,21 @@ def compute_g_loss(d_real_maps, d_fakes, d_fake_maps, feat_matching_weight=10):
     # g_loss = g_adv_loss + feat_matching_weight * g_feat_matching_loss
     g_adv_loss = 0
     for k in range(len(d_fakes)):
-        g_adv_loss_k = tf.reduce_mean(-1 * d_fakes[k])
+        g_adv_loss_k = tf.reduce_sum(d_fakes[k])
         g_adv_loss += g_adv_loss_k
+    '''
     g_feat_matching_loss = 0
     for k in range(len(d_real_maps)):
         g_feat_matching_loss += \
             tf.reduce_mean(tf.abs(d_real_maps[k] - d_fake_maps[k]))
-    g_loss = tf.reduce_mean(g_adv_loss) \
+
+    g_loss = -1 * g_adv_loss \
         + feat_matching_weight * g_feat_matching_loss
-    return g_loss
+    '''
     
+    g_loss = g_adv_loss
+    return g_loss
+
 @tf.function
 def train_step(audio_real, mel,
                generator, discriminator, 

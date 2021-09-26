@@ -52,30 +52,31 @@ class DiscriminatorBlock(tf.keras.layers.Layer):
             filters=1,
             kernel_size=3,
             strides=1,
-            padding='same'
+            padding='same',
+            activation='sigmoid'
         )
 
     @tf.function(experimental_compile=True)
     def call(self, x):
         feature_map1 = self.conv1(x)
-        feature_map1 = tf.nn.leaky_relu(feature_map1, self.alpha)
-
-        feature_map2_1 = self.downsampling1(feature_map1)
-        feature_map2_1 = tf.nn.leaky_relu(feature_map2_1, self.alpha)
         
-        feature_map2_2 = self.downsampling2(feature_map2_1)
-        feature_map2_2 = tf.nn.leaky_relu(feature_map2_2, self.alpha)
+        feature_map2_1 = tf.nn.leaky_relu(feature_map1, self.alpha)
+        feature_map2_1 = self.downsampling1(feature_map2_1)
 
-        feature_map2_3 = self.downsampling3(feature_map2_2)
-        feature_map2_3 = tf.nn.leaky_relu(feature_map2_3, self.alpha)
+        feature_map2_2 = tf.nn.leaky_relu(feature_map2_1, self.alpha)
+        feature_map2_2 = self.downsampling2(feature_map2_2)
 
-        feature_map2_4 = self.downsampling4(feature_map2_3)
-        feature_map2_4 = tf.nn.leaky_relu(feature_map2_4, self.alpha)
+        feature_map2_3 = tf.nn.leaky_relu(feature_map2_2, self.alpha)
+        feature_map2_3 = self.downsampling3(feature_map2_3)
 
-        feature_map3 = self.conv2(feature_map2_4)
-        feature_map3 = tf.nn.leaky_relu(feature_map3, self.alpha)
-        output = self.conv3(feature_map3)
-        #output = tf.nn.leaky_relu(output, self.alpha)
+        feature_map2_4 = tf.nn.leaky_relu(feature_map2_3, self.alpha)
+        feature_map2_4 = self.downsampling4(feature_map2_4)
+
+        feature_map3 = tf.nn.leaky_relu(feature_map2_4, self.alpha)
+        feature_map3 = self.conv2(feature_map3)
+
+        output = tf.nn.leaky_relu(feature_map3, self.alpha)
+        output = self.conv3(output)
 
         feature_maps = [
             feature_map1,
